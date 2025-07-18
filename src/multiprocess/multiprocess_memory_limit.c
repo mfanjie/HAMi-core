@@ -197,21 +197,16 @@ void do_init_device_sm_limits(uint64_t *arr, int len) {
 }
 
 int rm_quitted_process(){
-    FILE *wstream;
-    wstream=popen("ps ax","r");
-    char tmp[256];
-    char *atmp;
     int pidmap[SHARED_REGION_MAX_PROCESS_NUM];
-    memset(pidmap,0,sizeof(int)*SHARED_REGION_MAX_PROCESS_NUM);
+    memset(pidmap, 0, sizeof(int) * SHARED_REGION_MAX_PROCESS_NUM);
     ensure_initialized();
 
-    int32_t pid;
-    int i = 0,cnt=0,ret=0;
+    int i = 0, cnt = 0, ret = 0;
     LOG_INFO("rm_quitted_process");
     lock_shrreg();
     
     // First check for processes marked for cleanup by find_proc_by_hostpid
-    for (i=0; i<region_info.shared_region->proc_num; i++) {
+    for (i = 0; i < region_info.shared_region->proc_num; i++) {
         if (region_info.shared_region->procs[i].status == 0) {
             LOG_INFO("Removing process with pid=%d marked for cleanup\n", 
                      region_info.shared_region->procs[i].pid);
@@ -219,43 +214,37 @@ int rm_quitted_process(){
             ret = 1;
             continue;
         }
-        // Mark as not found yet
-        pidmap[i] = 0;
+        
+        // Check if process is alive using proc_alive instead of ps command
+        int32_t pid = region_info.shared_region->procs[i].pid;
+        if (pid != 0 && proc_alive(pid) == PROC_STATE_ALIVE) {
+            pidmap[i] = 1;  // Process is alive
+        } else {
+            pidmap[i] = 0;  // Process is not alive
+        }
     }
     
-    if (wstream!=NULL){
-        while (fgets(tmp,256,wstream)) {
-            atmp = strtok(tmp," ");
-            pid = atoi(atmp);
-            if (pid!=0)
-                for (i=0;i<region_info.shared_region->proc_num;i++)
-                    if (region_info.shared_region->procs[i].pid==pid){
-                        pidmap[i]=1;
-                    }
+    // Rebuild the process list, keeping only active processes
+    for (i = 0; i < region_info.shared_region->proc_num; i++) {
+        if (pidmap[i] == 0) {
+            LOG_INFO("rm pid=%d\n", region_info.shared_region->procs[i].pid);
+            ret = 1;
+            continue;
         }
         
-        // Rebuild the process list, keeping only active processes
-        for (i=0;i<region_info.shared_region->proc_num;i++){
-            if (pidmap[i]==0) {
-                LOG_INFO("rm pid=%d\n",region_info.shared_region->procs[i].pid);
-                ret = 1;
-                continue;
-            }
-            
-            // Only copy processes that are still active
-            if (i != cnt) { // Avoid unnecessary copy if already in place
-                region_info.shared_region->procs[cnt].pid=region_info.shared_region->procs[i].pid;
-                region_info.shared_region->procs[cnt].hostpid=region_info.shared_region->procs[i].hostpid;
-                region_info.shared_region->procs[cnt].status=region_info.shared_region->procs[i].status;
-                memcpy(region_info.shared_region->procs[cnt].used,region_info.shared_region->procs[i].used,sizeof(device_memory_t)*CUDA_DEVICE_MAX_COUNT);
-                memcpy(region_info.shared_region->procs[cnt].device_util,region_info.shared_region->procs[i].device_util,sizeof(device_util_t)*CUDA_DEVICE_MAX_COUNT);
-                memcpy(region_info.shared_region->procs[cnt].monitorused,region_info.shared_region->procs[i].monitorused,sizeof(uint64_t)*CUDA_DEVICE_MAX_COUNT);
-            }
-            cnt++;
+        // Only copy processes that are still active
+        if (i != cnt) { // Avoid unnecessary copy if already in place
+            region_info.shared_region->procs[cnt].pid = region_info.shared_region->procs[i].pid;
+            region_info.shared_region->procs[cnt].hostpid = region_info.shared_region->procs[i].hostpid;
+            region_info.shared_region->procs[cnt].status = region_info.shared_region->procs[i].status;
+            memcpy(region_info.shared_region->procs[cnt].used, region_info.shared_region->procs[i].used, sizeof(device_memory_t) * CUDA_DEVICE_MAX_COUNT);
+            memcpy(region_info.shared_region->procs[cnt].device_util, region_info.shared_region->procs[i].device_util, sizeof(device_util_t) * CUDA_DEVICE_MAX_COUNT);
+            memcpy(region_info.shared_region->procs[cnt].monitorused, region_info.shared_region->procs[i].monitorused, sizeof(uint64_t) * CUDA_DEVICE_MAX_COUNT);
         }
-        region_info.shared_region->proc_num=cnt;
-        pclose(wstream);
+        cnt++;
     }
+    
+    region_info.shared_region->proc_num = cnt;
     unlock_shrreg();
     return ret;
 }
